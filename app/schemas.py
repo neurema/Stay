@@ -51,21 +51,33 @@ class CompletedSession(BaseModel):
     notes: Optional[str] = None
 
     @validator("topic", always=True)
-    def ensure_topic_for_individual(cls, value: Optional[str], values: Dict[str, object]) -> Optional[str]:
-        if values.get("sessionType") == "individual" and not value:
+    def ensure_topic_for_individual(
+        cls, value: Optional[str], values: Optional[Dict[str, object]] = None, **kwargs
+    ) -> Optional[str]:
+        if values and values.get("sessionType") == "individual" and not value:
             raise ValueError("Individual sessions must specify a topic")
         return value
 
     @validator("topicsCovered", always=True)
     def ensure_topics_for_bubble(
-        cls, value: Optional[Sequence["TopicContribution"]], values: Dict[str, object]
+        cls, value: Optional[Sequence["TopicContribution"]], values: Optional[Dict[str, object]] = None, **kwargs
     ) -> Optional[Sequence["TopicContribution"]]:
-        if values.get("sessionType") == "bubble":
+        if values and values.get("sessionType") == "bubble":
             if not values.get("bubbleId"):
                 raise ValueError("Bubble sessions must include a bubbleId")
             if not value:
                 raise ValueError("Bubble sessions must include topicsCovered")
         return value
+
+    def __post_init__(self) -> None:
+        session_type = getattr(self, "sessionType", None)
+        if session_type == "individual" and not getattr(self, "topic", None):
+            raise ValueError("Individual sessions must specify a topic")
+        if session_type == "bubble":
+            if not getattr(self, "bubbleId", None):
+                raise ValueError("Bubble sessions must include a bubbleId")
+            if not getattr(self, "topicsCovered", None):
+                raise ValueError("Bubble sessions must include topicsCovered")
 
 
 class TopicContribution(BaseModel):
