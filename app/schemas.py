@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from datetime import date
-from typing import Dict, List, Literal, Optional, Union
+from typing import Dict, List, Literal, Optional, Sequence, Union
 
 from pydantic import BaseModel, Field, validator
 
 StudyMode = Literal["Academic", "Effective", "Crunch"]
+ConfidenceLevel = Literal["Easy", "Medium", "Hard"]
+SessionType = Literal["individual", "bubble"]
 
 
 class TopicPerformance(BaseModel):
@@ -18,6 +20,7 @@ class TopicInput(BaseModel):
     lastCovered: Optional[date] = None
     importance: Optional[int] = Field(default=None, ge=1, le=5)
     difficulty: Optional[Union[str, float, int]] = None
+    tags: Optional[List[str]] = None
 
 
 class ScheduleRequest(BaseModel):
@@ -35,10 +38,40 @@ class ScheduleRequest(BaseModel):
 
 
 class CompletedSession(BaseModel):
-    topic: str
+    sessionType: SessionType
     date: date
-    result: Union[str, float, int]
+    topic: Optional[str] = None
+    bubbleId: Optional[str] = None
+    mcqScore: float = Field(ge=0.0, le=1.0)
+    confidence: ConfidenceLevel
+    plannedMinutes: int = Field(ge=1)
+    actualMinutes: int = Field(ge=1)
+    interleavingScore: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    topicsCovered: Optional[Sequence["TopicContribution"]] = None
     notes: Optional[str] = None
+
+    @validator("topic", always=True)
+    def ensure_topic_for_individual(cls, value: Optional[str], values: Dict[str, object]) -> Optional[str]:
+        if values.get("sessionType") == "individual" and not value:
+            raise ValueError("Individual sessions must specify a topic")
+        return value
+
+    @validator("topicsCovered", always=True)
+    def ensure_topics_for_bubble(
+        cls, value: Optional[Sequence["TopicContribution"]], values: Dict[str, object]
+    ) -> Optional[Sequence["TopicContribution"]]:
+        if values.get("sessionType") == "bubble":
+            if not values.get("bubbleId"):
+                raise ValueError("Bubble sessions must include a bubbleId")
+            if not value:
+                raise ValueError("Bubble sessions must include topicsCovered")
+        return value
+
+
+class TopicContribution(BaseModel):
+    topic: str
+    correct: int = Field(ge=0)
+    total: int = Field(gt=0)
 
 
 class AvailabilityChanges(BaseModel):
@@ -59,8 +92,11 @@ class ScheduleUpdate(BaseModel):
 
 
 class ReviewSession(BaseModel):
-    topic: str
+    sessionType: SessionType
     reviewMethod: str
+    topic: Optional[str] = None
+    bubbleId: Optional[str] = None
+    topics: Optional[List[str]] = None
 
 
 class DaySchedule(BaseModel):
@@ -71,3 +107,4 @@ class DaySchedule(BaseModel):
 class ScheduleResponse(BaseModel):
     scheduleId: str
     schedule: List[DaySchedule]
+    alerts: Optional[List[str]] = None

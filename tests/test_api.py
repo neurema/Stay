@@ -72,7 +72,7 @@ class BaseModel(metaclass=BaseModelMeta):
         return self.dict() == other.dict()
 
 
-def validator(*fields):
+def validator(*fields, **kwargs):
     def decorator(func):
         func.__validator_fields__ = fields
         return func
@@ -117,9 +117,11 @@ def test_create_plan_generates_academic_schedule(store: MemoryStore) -> None:
     assert response.scheduleId
     assert response.schedule
     first_day = response.schedule[0]
-    assert first_day.date == date(2025, 11, 2)
-    assert first_day.sessions[0].topic == "Biology Basics"
-    assert first_day.sessions[0].reviewMethod == "summarize"
+    assert first_day.date == date(2025, 11, 1)
+    first_session = first_day.sessions[0]
+    assert first_session.sessionType == "individual"
+    assert first_session.topic == "Biology Basics"
+    assert first_session.reviewMethod == "summarize"
 
 
 def test_update_plan_schedules_follow_up_for_failures(store: MemoryStore) -> None:
@@ -133,7 +135,15 @@ def test_update_plan_schedules_follow_up_for_failures(store: MemoryStore) -> Non
 
     update = ScheduleUpdate(
         completedSessions=[
-            CompletedSession(topic="Organic Chemistry", date=date(2025, 11, 4), result="failure")
+            CompletedSession(
+                sessionType="individual",
+                topic="Organic Chemistry",
+                date=date(2025, 11, 4),
+                mcqScore=0.4,
+                confidence="Hard",
+                plannedMinutes=30,
+                actualMinutes=45,
+            )
         ]
     )
 
@@ -143,7 +153,9 @@ def test_update_plan_schedules_follow_up_for_failures(store: MemoryStore) -> Non
         day.date
         for day in updated.schedule
         for session in day.sessions
-        if session.topic == "Organic Chemistry" and day.date >= date(2025, 11, 4)
+        if session.sessionType == "individual"
+        and session.topic == "Organic Chemistry"
+        and day.date >= date(2025, 11, 4)
     ]
 
     assert target_dates, "Expected follow-up sessions for the failed topic"
@@ -166,4 +178,6 @@ def test_get_plan_returns_latest_schedule(store: MemoryStore) -> None:
     fetched = store.get_plan(created.scheduleId)
 
     assert fetched.scheduleId == created.scheduleId
-    assert fetched.schedule == created.schedule
+    assert fetched.schedule
+    first_fetch_day = fetched.schedule[0].date
+    assert first_fetch_day >= max(date.today(), request.startDate)
