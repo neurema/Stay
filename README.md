@@ -1,6 +1,6 @@
 # Stay Effective v5 Backend
 
-Stay Effective v5 is a deterministic spaced-repetition scheduler exposed through a FastAPI service. It models topic creation, adaptive revision spacing, and optional "bubble" prioritisation windows for harder material. The codebase implements the specification documented in `Stay_Effective_v5_Complete.md` and includes self-checks that reproduce the worked examples from that document.
+Stay Effective v5 is a deterministic spaced‑repetition scheduler exposed via FastAPI. It models topic creation, adaptive revision spacing, and optional "bubble" prioritisation windows for harder material. The codebase implements the specification documented in `Stay_Effective_v5_Complete.md` and includes self‑checks that reproduce the worked examples from that document.
 
 ## Why this project exists
 - Plan revision sessions for up to 270 days with hard and soft topic bands.
@@ -10,32 +10,44 @@ Stay Effective v5 is a deterministic spaced-repetition scheduler exposed through
 
 ## Repository layout
 - `app/main.py` – FastAPI application entry point and router registration.
+- `app/models.py` – Pydantic schemas for requests/responses (topics, sessions, Monte Carlo payloads).
 - `app/services.py` – Deterministic business logic for topics, schedules, bubble templates, and CSV export.
-- `app/scheduler.py` – In-memory day-by-day scheduler backing the `/revision/schedule` endpoint.
-- `app/formulas.py` – Decay-based recall model and threshold scheduling (Δt = −S ln T), with inline worked-example assertions.
-- `app/bubble_templates.py` – Built-in bubble schedules plus environment-driven overrides.
+- `app/scheduler.py` – In‑memory day‑by‑day scheduler backing the `/revision/schedule` endpoint.
+- `app/formulas.py` – Decay‑based recall model and threshold scheduling (Δt = −S ln T), with inline worked‑example assertions.
+- `app/constants.py` – Tunable constants, bands, caps, and worked example values.
+- `app/bubble_templates.py` – Built‑in bubble schedules plus environment‑driven overrides.
 - `app/routes/` – API route handlers for topics, revision execution, and analytical endpoints.
-- `app/tests/` – `unittest` suites that exercise the endpoints, recreate spec math, and generate load charts. Artifacts land in `app/tests/artifacts/`.
+- `app/tests/` – `unittest` suites that exercise endpoints, recreate spec math, and generate load charts. Artifacts land in `app/tests/artifacts/`.
+
+For a deeper architecture walkthrough of “what is what,” see `docs/CODEBASE.md`.
 
 ## Prerequisites
-- Python 3.11 (or newer 3.10+ build with `venv`).
-- PowerShell 7 (the default Windows shell here).
-- Recommended packages: `fastapi`, `uvicorn[standard]`, `pydantic`, `matplotlib` (optional for plotting tests).
+- Python 3.11 (or newer 3.10+ with `venv`).
+- Shell of choice (PowerShell, bash, zsh).
+- Packages: `fastapi`, `uvicorn[standard]`, `pydantic`, `httpx`, `anyio` (tests), `matplotlib` (optional for plotting tests).
 
 ### Create a virtual environment (Windows PowerShell)
 ```powershell
 py -3.11 -m venv .venv
 . .\.venv\Scripts\Activate.ps1
 pip install --upgrade pip
-pip install fastapi "uvicorn[standard]" pydantic matplotlib
+pip install fastapi "uvicorn[standard]" pydantic httpx anyio matplotlib
 ```
 
 If you prefer a requirements file, freeze the environment once the basics are installed and commit the list for teammates.
 
+### Create a virtual environment (Linux/macOS)
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install fastapi "uvicorn[standard]" pydantic httpx anyio matplotlib
+```
+
 ## Running the API locally
 1. Activate your virtual environment.
 2. From the repository root run:
-   ```powershell
+   ```bash
    uvicorn app.main:app --reload --port 8000
    ```
 3. Visit `http://127.0.0.1:8000/docs` for the interactive Swagger UI.
@@ -91,6 +103,8 @@ Bubble templates let you reserve additional revisions for selected topics.
 - Templates marked `relative: true` treat values as offsets from the topic's `add_day`.
 - Use `services.register_bubble_template()` to add templates at runtime (tests demonstrate this pattern).
 
+At startup the app resolves bubble templates via `bubble_templates.resolve_templates()` which reads `STAY_BUBBLE_TEMPLATES_FILE` if provided, or falls back to the built‑ins. The `services.configure_bubble_templates()` call registers them for use by topic creation.
+
 ## Exporting schedules
 Call `services.export_topic_schedule_csv(Path("./output.csv"))` to materialise a per-topic timeline containing intro, completed revisions, and future planned days. The `app/tests/test_api_revision_load.py` test uses this helper after generating 900 topics.
 
@@ -98,8 +112,8 @@ Call `services.export_topic_schedule_csv(Path("./output.csv"))` to materialise a
 The `/analysis/monte-carlo` route is wired to `services.run_monte_carlo_batch`. The current codebase does not provide an implementation, so calling this endpoint raises a 500 error. Add your simulation engine there to return `MonteCarloBatchResponse` payloads, and extend the tests to cover typical scenarios.
 
 ## Running the test suites
-Tests use Python's built-in `unittest` runner (internally using httpx's ASGI transport for endpoints). Execute everything with:
-```powershell
+Tests use Python's built‑in `unittest` runner (using httpx’s ASGI transport to exercise endpoints). Execute everything with:
+```bash
 python -m unittest discover app/tests
 ```
 Key suites:
@@ -128,3 +142,7 @@ Happy scheduling! Feel free to adapt the deterministic formulas to your domain w
   - `pi` = current recall probability (was performance index)
   - `crs` = next-interval estimate in days (was composite revision score)
 - The endpoint shapes and request payloads are unchanged.
+
+---
+
+For a module-by-module architecture guide, see `docs/CODEBASE.md`.
