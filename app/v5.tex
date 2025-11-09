@@ -1,0 +1,118 @@
+
+% v5_adaptive_full.tex
+% This file merges v4 (1).tex (renamed to Legacy Version 4.0) and the new Adaptive Version 5.0 section.
+
+\documentclass[12pt]{article}
+\usepackage{amsmath, amssymb, geometry, graphicx}
+\geometry{margin=1in}
+\begin{document}
+
+% ----------------------
+% LEGACY CONTENT FROM v4 (1).tex (renamed for clarity)
+% ----------------------
+\section*{Legacy Adaptive Revision Scheduling Algorithm (Version 4.0)}
+
+\input{v4 (1).tex}
+
+% ----------------------
+% NEW APPENDED SECTION: Adaptive Revision Scheduling Algorithm (Version 5.0 - Exact Canonical Model)
+% ----------------------
+\section*{Adaptive Revision Scheduling Algorithm (Version 5.0 - Exact Canonical Model)}
+\label{sec:v5_adaptive}
+
+This section documents the canonical adaptive model (EF, PI, CRS) used in the v5 adaptive simulation and provides exact formulas, parameter choices, pseudocode, and a short simulation summary.
+
+\subsection*{Overview}
+We keep the structural scheduling and bubble rules from Version~4 (non-hard vs hard bubble cutoffs) and add a cognitive/adaptive layer that updates per-topic variables after each review. The adaptive variables are:
+\begin{itemize}
+  \item \textbf{EF} -- Easiness Factor (SM-2 style), continuous, lower bound 1.3.
+  \item \textbf{PI} -- Performance Index (0--1), short-term exponential moving average of successes.
+  \item \textbf{CRS} -- Cognitive Retention Score (0--1), a smoothed function combining EF and PI used to compute recall probability.
+\end{itemize}
+
+\subsection*{Canonical formulas (exact)}
+All formulas below were used exactly in the simulation.
+
+\paragraph{Session success probability}
+For a topic with current EF, PI, and CRS, the simulated probability of a successful recall at a scheduled session is:
+\begin{equation}
+P(\text{success}) = \operatorname{clip}\left(0.05,\;0.95,\; \text{CRS}\;\times\;\left(0.6 + \frac{0.4}{\text{EF}}\right) \right).
+\end{equation}
+
+\paragraph{Quality mapping}
+Binary mapping for EF update:
+\begin{itemize}
+  \item Success $\Rightarrow q = 5$,
+  \item Failure $\Rightarrow q = 1$.
+\end{itemize}
+
+\paragraph{EF update (SM-2 exact)}
+\begin{equation}
+\text{EF}_{\text{new}} = \max\left(1.3,\; \text{EF}_{\text{old}} + 0.1 - (5 - q)\cdot\left(0.08 + (5 - q)\cdot 0.02\right)\right).
+\end{equation}
+
+\paragraph{PI update}
+\begin{equation}
+\text{PI}_{\text{new}} = \alpha\cdot\text{PI}_{\text{old}} + (1 - \alpha)\cdot s,
+\end{equation}
+where $s=1$ for success, $s=0$ for failure, and $\alpha = 0.85$.
+
+\paragraph{CRS update}
+\begin{equation}
+\text{CRS}_{\text{new}} = (1 - \gamma)\cdot\text{CRS}_{\text{old}} + \gamma\cdot \sigma\big(\log(\text{EF}) + 2\cdot(\text{PI} - 0.5)\big),
+\end{equation}
+where $\gamma = 0.05$ and $\sigma(x) = 1/(1 + e^{-x})$.
+
+\subsection*{Scheduling and bubble rules (structural)}
+\begin{itemize}
+  \item Normal intervals (relative to introduction day): $[0,1,3,7,14]$ days.
+  \item Non-hard topics: perform first three normal reviews (0,1,3) then enter bubble phase (2 bubble sessions).
+  \item Hard topics: perform first four normal reviews (0,1,3,7) then enter bubble phase (2 bubble sessions).
+  \item Bubble window: last 25\% of timeline (for 270-day sim: days 202--269).
+  \item Daily cap $R_{max}=10$.
+  \item Normal sessions allowed $\pm7$-day shifts (order preserved) to smooth daily peaks.
+\end{itemize}
+
+\subsection*{Simulation workflow}
+\begin{enumerate}
+  \item Initialize $N$ topics with random add days and difficulty (Beta(2,3)).
+  \item Initialize EF, PI, CRS from uniform ranges.
+  \item Build normal-session schedule and smooth within $\pm7$ days.
+  \item Assign two bubble sessions per topic inside bubble window.
+  \item Simulate day-by-day: compute $P(\text{success})$, sample outcome, update EF/PI/CRS, record.
+\end{enumerate}
+
+\subsection*{Parameters used}
+\begin{tabular}{ll}
+Parameter & Value \\\\
+\hline
+Total days & 270 (9 months) \\\\
+Topics & 460 \\\\
+Add range & Uniform(0--210) \\\\
+$R_{max}$ & 10 \\\\
+Hard threshold & 0.7 \\\\
+EF init & [1.9,2.6] \\\\
+PI init & [0.4,1.0] \\\\
+CRS init & [0.6,1.0] \\\\
+EF lower bound & 1.3 \\\\
+$\alpha$ (PI inertia) & 0.85 \\\\
+$\gamma$ (CRS mix) & 0.05 \\\\
+Bubble window & 202--269 \\\\
+\end{tabular}
+
+\subsection*{Summary of results}
+\begin{itemize}
+  \item Hard topics: 31 / 460.
+  \item Mastered (CRS$\ge$0.7, EF$\ge$2.0): 118.
+  \item Mean final EF: 1.78, PI: 0.66, CRS: 0.78.
+  \item Max daily load: 10.
+\end{itemize}
+
+\subsection*{Notes}
+\begin{itemize}
+  \item Bubble rule remains structural (non-hard +7, hard +14) but EF/PI/CRS adapt per session.
+  \item Dynamic bubble entry (based on EF/PI/CRS thresholds) can define v5.1.
+  \item CSV outputs: \texttt{adaptive\_schedule.csv}, \texttt{adaptive\_topic\_history.csv}.
+\end{itemize}
+
+\end{document}
