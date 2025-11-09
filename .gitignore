@@ -214,3 +214,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Stay project: generated artifacts and temp helpers
+app/tests/artifacts/
+uvicorn_pid
+tmp_*.py
+*_load_trials.csv
+*-topic_system_load_trials.csv
