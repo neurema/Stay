@@ -1,156 +1,137 @@
-"""Deterministic Stay Effective v5 formula implementations.
+"""Decay-based scheduling formulas derived from Abstract.docx.
 
-References: Section 6 (EF/PI/CRS/S), Section 7 (Effective Interval Mapping), Section 11
-Worked Example in Stay_Effective_v5_Complete.md.
+The abstract prescribes modelling each topic's recall probability as
+    R_i(t) = exp(-(t - t_last,i) / S_i)
+with S_i updated in the same spirit as SuperMemo's ease-factor rule. The next
+review is scheduled when the probability falls to a threshold T, i.e.
+    Δt = -S_i * ln(T).
+Short horizons (< 60 days) compress Δt linearly and hard topics receive an
+additional multiplier so they recur sooner.
 """
 from __future__ import annotations
 
 import math
-from typing import Tuple
 
 from .constants import (
-    ALPHA_PI,
-    BASE_INTERVALS,
-    EF_MIN,
-    GAMMA_CRS,
-    KAPPA,
-    P_NEXT,
-    P_REF,
-    SIGMOID_GAMMA,
-    SIGMOID_MU,
+    FORGETTING_RATE_MAX,
+    FORGETTING_RATE_MIN,
+    HARD_INTERVAL_SCALE,
+    MIN_INTERVAL_DAYS,
+    RECALL_THRESHOLD,
+    SHORT_HORIZON_DAYS,
+    SOFT_INTERVAL_SCALE,
     WORKED_EXAMPLE,
 )
 
 
 def clip(value: float, lo: float, hi: float) -> float:
-    """Clamp *value* to [lo, hi] (Section 6.1)."""
+    """Clamp *value* to [lo, hi]."""
 
     return max(lo, min(hi, value))
 
 
-def update_ef(ef: float, success: bool) -> float:
-    """SM-2 EF update per Section 6.2."""
+def update_forgetting_rate(forgetting_rate: float, success: bool) -> float:
+    """SuperMemo-style update applied to the per-topic forgetting rate."""
 
     q = 5 if success else 1
     delta = 0.1 - (5 - q) * (0.08 + (5 - q) * 0.02)
-    new_ef = ef + delta
-    return max(EF_MIN, new_ef)
+    updated = forgetting_rate + delta
+    return clip(updated, FORGETTING_RATE_MIN, FORGETTING_RATE_MAX)
 
 
-def compute_pi(nd: float, ns: float, t_min: float) -> float:
-    """Compute PI using Section 6.3 definition."""
+def recall_probability(elapsed_days: float, forgetting_rate: float) -> float:
+    """Return R_i(t) = exp(-Δt / S_i)."""
 
-    if ns <= 0 or t_min <= 0:
-        raise ValueError("NS and Tmin must be positive per Section 6.3")
-    return math.log10(1.0 + nd / (ns * t_min))
-
-
-def compute_crs_initial(ef: float, pi: float) -> float:
-    """Initial CRS as in Section 6.4(A)."""
-
-    return (ef * pi) / KAPPA
+    if forgetting_rate <= 0:
+        raise ValueError("Forgetting rate must be positive")
+    if elapsed_days <= 0:
+        return 1.0
+    return math.exp(-elapsed_days / forgetting_rate)
 
 
-def _sigmoid(x: float) -> float:
-    return 1.0 / (1.0 + math.exp(-x))
+def interval_for_threshold(
+    forgetting_rate: float,
+    *,
+    threshold: float = RECALL_THRESHOLD,
+) -> float:
+    """Solve Δt = -S_i * ln(T)."""
+
+    if forgetting_rate <= 0:
+        raise ValueError("Forgetting rate must be positive")
+    if not 0 < threshold < 1:
+        raise ValueError("Threshold must be between 0 and 1")
+    return -forgetting_rate * math.log(threshold)
 
 
-def update_crs(crs_old: float, ef: float, pi: float) -> float:
-    """Dynamic CRS mixing per Section 6.4(B)."""
+def apply_short_horizon(interval: float, remaining_days: float) -> float:
+    """Compress intervals when the learner has < 60 days remaining."""
 
-    if ef <= 0:
-        raise ValueError("EF must be positive to update CRS")
-    logits = math.log(ef) + 2.0 * (pi - 0.5)
-    target = _sigmoid(logits)
-    return (1.0 - GAMMA_CRS) * crs_old + GAMMA_CRS * target
-
-
-def compute_alphaM(ef: float) -> float:
-    """Sigmoid modulation αM from Section 6.5."""
-
-    return 0.5 + 1.0 / (1.0 + math.exp(-SIGMOID_GAMMA * (ef - SIGMOID_MU)))
+    if remaining_days <= 0:
+        # Already in crunch mode, cap at quarter of the base interval.
+        return max(MIN_INTERVAL_DAYS, interval * 0.25)
+    if remaining_days >= SHORT_HORIZON_DAYS:
+        return interval
+    scale = remaining_days / SHORT_HORIZON_DAYS
+    return max(MIN_INTERVAL_DAYS, interval * scale)
 
 
-def get_I_base(revision_count: int) -> int:
-    """Base interval lookup from Section 7.1."""
+def apply_difficulty_focus(interval: float, difficulty: float, is_hard: bool) -> float:
+    """Shorten intervals for high-difficulty topics."""
 
-    if revision_count < 0:
-        raise ValueError("revision_count must be non-negative")
-    if revision_count < len(BASE_INTERVALS):
-        return BASE_INTERVALS[revision_count]
-    return BASE_INTERVALS[-1]
+    scale = HARD_INTERVAL_SCALE if (is_hard or difficulty >= 0.7) else SOFT_INTERVAL_SCALE
+    return max(MIN_INTERVAL_DAYS, interval * scale)
 
 
-def compute_I_eff(i_base: float, crs: float, ef: float) -> float:
-    """Effective interval computation per Section 7 step 1."""
+def compute_interval(
+    forgetting_rate: float,
+    *,
+    remaining_days: float,
+    difficulty: float,
+    is_hard: bool,
+    threshold: float = RECALL_THRESHOLD,
+) -> float:
+    """Full interval computation described in the abstract."""
 
-    if i_base < 0:
-        raise ValueError("I_base must be non-negative")
-    alpha_m = compute_alphaM(ef)
-    return i_base * crs * alpha_m
-
-
-def compute_S_and_delta(i_eff: float) -> Tuple[float, float]:
-    """Map I_eff to S and delta (Section 7)."""
-
-    if i_eff <= 0:
-        raise ValueError("I_eff must be positive")
-    S = -i_eff / math.log(P_REF)
-    delta = -S * math.log(P_NEXT)
-    return S, delta
+    base = interval_for_threshold(forgetting_rate, threshold=threshold)
+    compressed = apply_short_horizon(base, remaining_days)
+    adjusted = apply_difficulty_focus(compressed, difficulty, is_hard)
+    return max(MIN_INTERVAL_DAYS, adjusted)
 
 
 # ---------------------------------------------------------------------------
-# Inline Worked Example assertions (≤ 1 % relative error per prompt requirement)
+# Inline checks using the abstract's worked values.
 # ---------------------------------------------------------------------------
-
-
-def _assert_relative_close(name: str, value: float, expected: float, tolerance: float = 0.01) -> None:
-    if expected == 0.0:
-        if not math.isclose(value, expected, abs_tol=tolerance):
-            raise AssertionError(f"{name} expected {expected} got {value}")
-        return
-    rel_error = abs(value - expected) / abs(expected)
-    if rel_error > tolerance:
-        raise AssertionError(f"{name} expected {expected} got {value} (rel err {rel_error:.4f})")
 
 
 _EX = WORKED_EXAMPLE
+_S = _EX["forgetting_rate"]
+_threshold = _EX["threshold"]
+_elapsed = _EX["elapsed"]
+_rem = _EX["remaining_days"]
+_difficulty = _EX["difficulty"]
 
-_example_clip = clip(_EX["CRS"], 0.05, 0.95)
-_assert_relative_close("clip(example CRS)", _example_clip, clip(_EX["CRS"], 0.05, 0.95))
+_raw_interval = interval_for_threshold(_S, threshold=_threshold)
+if not math.isclose(_raw_interval, _EX["raw_interval"], rel_tol=1e-6):
+    raise AssertionError("interval_for_threshold mismatch with worked example")
 
-_example_ef_success = update_ef(_EX["EF"], True)
-_expected_ef_success = max(EF_MIN, _EX["EF"] + 0.1)
-_assert_relative_close("update_ef(success)", _example_ef_success, _expected_ef_success)
+_recall = recall_probability(_elapsed, _S)
+if not math.isclose(_recall, _EX["recall_probability"], rel_tol=1e-6):
+    raise AssertionError("recall_probability mismatch with worked example")
 
-_example_pi = compute_pi(_EX["ND"], _EX["NS"], _EX["Tmin"])
-_assert_relative_close("compute_pi", _example_pi, _EX["PI"])
+_compressed = apply_short_horizon(_raw_interval, _rem)
+if not math.isclose(_compressed, _EX["compressed_interval"], rel_tol=1e-6):
+    raise AssertionError("apply_short_horizon mismatch with worked example")
 
-_example_crs = compute_crs_initial(_EX["EF"], _EX["PI"])
-_assert_relative_close("compute_crs_initial", _example_crs, _EX["CRS"])
+_difficulty_interval = apply_difficulty_focus(_compressed, _difficulty, True)
+if not math.isclose(_difficulty_interval, _EX["difficulty_interval"], rel_tol=1e-6):
+    raise AssertionError("apply_difficulty_focus mismatch with worked example")
 
-_example_crs_updated = update_crs(_EX["CRS"], _EX["EF"], _EX["PI"])
-_expected_crs_update = (1.0 - GAMMA_CRS) * _EX["CRS"] + GAMMA_CRS * _sigmoid(math.log(_EX["EF"]) + 2.0 * (_EX["PI"] - 0.5))
-_assert_relative_close("update_crs", _example_crs_updated, _expected_crs_update)
-
-_example_alpha = compute_alphaM(_EX["EF"])
-_assert_relative_close("compute_alphaM", _example_alpha, _EX["alphaM"])
-
-_example_i_base = _EX["I_eff"] / (_EX["CRS"] * _example_alpha)
-_assert_relative_close("example I_base derived", _example_i_base, 5.0)
-
-_example_i_eff = compute_I_eff(_example_i_base, _EX["CRS"], _EX["EF"])
-_assert_relative_close("compute_I_eff", _example_i_eff, _EX["I_eff"])
-
-_example_S, _example_delta = compute_S_and_delta(_EX["I_eff"])
-_assert_relative_close("compute_S", _example_S, _EX["S"])
-_assert_relative_close("compute_delta", _example_delta, _EX["delta"])
-
-_example_revision_index = min(range(len(BASE_INTERVALS)), key=lambda idx: abs(BASE_INTERVALS[idx] - _example_i_base))
-_assert_relative_close(
-    "get_I_base(example index)",
-    float(get_I_base(_example_revision_index)),
-    float(BASE_INTERVALS[_example_revision_index]),
-    0.0,
+_full_interval = compute_interval(
+    _S,
+    remaining_days=_rem,
+    difficulty=_difficulty,
+    is_hard=True,
+    threshold=_threshold,
 )
+if not math.isclose(_full_interval, _EX["difficulty_interval"], rel_tol=1e-6):
+    raise AssertionError("compute_interval mismatch with worked example")

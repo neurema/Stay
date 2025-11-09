@@ -1,0 +1,86 @@
+{
+  "info": {
+    "name": "Stay Effective API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Collection for health, topics, revision, schedule"
+  },
+  "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/health",
+          "host": ["{{baseUrl}}"],
+          "path": ["health"]
+        }
+      }
+    },
+    {
+      "name": "Create Topic",
+      "request": {
+        "method": "POST",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"}
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"subject_tag\": \"Postman Topic\",\n  \"difficulty\": 0.6,\n  \"add_day\": 1,\n  \"rt_ratio\": 1.0,\n  \"accuracy\": 0.85,\n  \"nd\": 180,\n  \"ns\": 50,\n  \"tmin_label\": \"Major\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/topics/",
+          "host": ["{{baseUrl}}"],
+          "path": ["topics", ""]
+        }
+      }
+    },
+    {
+      "name": "Get Topic",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/topics/{{topicId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["topics", "{{topicId}}"]
+        }
+      }
+    },
+    {
+      "name": "Execute Revision",
+      "request": {
+        "method": "POST",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"}
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"topic_id\": \"{{topicId}}\",\n  \"day\": 1,\n  \"success\": true\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/revision/",
+          "host": ["{{baseUrl}}"],
+          "path": ["revision", ""]
+        }
+      }
+    },
+    {
+      "name": "Schedule: Day 1",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/revision/schedule/day/1",
+          "host": ["{{baseUrl}}"],
+          "path": ["revision", "schedule", "day", "1"]
+        }
+      }
+    }
+  ],
+  "variable": [
+    {"key": "baseUrl", "value": "http://127.0.0.1:8000"},
+    {"key": "topicId", "value": ""}
+  ]
+}
+

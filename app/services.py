@@ -14,10 +14,9 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from . import models
 from .constants import (
-    ALPHA_PI,
     AS_INDEX_TABLE,
     DIFFICULTY_INDEX_TABLE,
-    EF_MIN,
+    FORGETTING_RATE_MIN,
     HARD_REVISION_OFFSETS,
     SOFT_REVISION_OFFSETS,
     MAX_BUBBLE_DAY,
@@ -27,13 +26,9 @@ from .constants import (
     TOTAL_DAYS,
 )
 from .formulas import (
-    compute_I_eff,
-    compute_S_and_delta,
-    compute_crs_initial,
-    compute_pi,
-    get_I_base,
-    update_crs,
-    update_ef,
+    compute_interval,
+    recall_probability,
+    update_forgetting_rate,
 )
 from .scheduler import DeterministicScheduler, build_topic_schedule
 
@@ -58,10 +53,10 @@ class TopicState:
     add_day: int
     bubble_id: Optional[str]
     is_hard: bool
-    base_ef: float
-    ef: float
-    pi: float
-    crs: float
+    base_forgetting_rate: float
+    forgetting_rate: float
+    recall_probability: float
+    interval_days: float
     schedule: List[int] = field(default_factory=list)
     bubble_days: List[int] = field(default_factory=list)
     bubble_day_set: Set[int] = field(default_factory=set)
@@ -70,6 +65,7 @@ class TopicState:
     nd: int = 0
     ns: int = 0
     tmin: float = 0.0
+    last_review_day: int = 0
 
 
 _topics: Dict[str, TopicState] = {}
@@ -131,10 +127,10 @@ def _serialize_state(state: TopicState) -> models.Topic:
         add_day=state.add_day,
         bubble_id=state.bubble_id,
         is_hard=state.is_hard,
-        base_ef=state.base_ef,
-        ef=state.ef,
-        pi=state.pi,
-        crs=state.crs,
+        base_ef=state.base_forgetting_rate,
+        ef=state.forgetting_rate,
+        pi=state.recall_probability,
+        crs=state.interval_days,
         nd=state.nd,
         ns=state.ns,
         tmin=state.tmin,
@@ -144,44 +140,29 @@ def _serialize_state(state: TopicState) -> models.Topic:
     )
 
 
-def _simulate_future_days(
-    ef: float,
-    pi: float,
-    crs: float,
-    revision_index: int,
-    current_day: int,
-    baseline_pi: float,
-) -> List[int]:
+def _simulate_future_days(state: TopicState, anchor_day: int) -> List[int]:
     """Simulate forward-looking revision days assuming deterministic success."""
 
     planned_days: List[int] = []
-    local_ef = max(EF_MIN, ef)
-    local_pi = pi
-    local_crs = crs
-    local_revision = revision_index
-    day_cursor = current_day
+    day_cursor = anchor_day
+    local_rate = max(FORGETTING_RATE_MIN, state.forgetting_rate)
 
     while day_cursor < TOTAL_DAYS:
-        i_base = get_I_base(local_revision)
-        if i_base <= 0:
-            i_base = 1
-        try:
-            i_eff = compute_I_eff(i_base, local_crs, local_ef)
-            _S, delta = compute_S_and_delta(i_eff)
-        except ValueError:
-            break
-
-        step = max(1, math.ceil(delta))
+        remaining_days = max(1, state.nd - day_cursor)
+        interval = compute_interval(
+            local_rate,
+            remaining_days=remaining_days,
+            difficulty=state.difficulty,
+            is_hard=state.is_hard,
+        )
+        step = max(1, math.ceil(interval))
         next_day = day_cursor + step
         if next_day > TOTAL_DAYS:
             break
 
         planned_days.append(next_day)
         day_cursor = next_day
-        local_revision += 1
-        local_ef = update_ef(local_ef, True)
-        local_pi = ALPHA_PI * local_pi + (1.0 - ALPHA_PI) * baseline_pi
-        local_crs = update_crs(local_crs, local_ef, local_pi)
+        local_rate = update_forgetting_rate(local_rate, True)
 
     return planned_days
 
@@ -189,50 +170,26 @@ def _simulate_future_days(
 def _extend_schedule_post_creation(state: TopicState) -> None:
     """Extend newly created topics to cover the full planning horizon."""
 
-    baseline_pi = compute_pi(state.nd, state.ns, state.tmin)
     scheduled = sorted({day for day in state.schedule if 0 <= day <= TOTAL_DAYS})
 
     if not scheduled:
         return
 
-    local_ef = max(EF_MIN, state.ef)
-    local_pi = state.pi
-    local_crs = state.crs
-    local_revision = state.revision_count
-    current_day = state.add_day
-
-    for day in scheduled:
-        if day <= current_day:
-            current_day = max(current_day, day)
-            continue
-
-        local_ef = update_ef(local_ef, True)
-        local_pi = ALPHA_PI * local_pi + (1.0 - ALPHA_PI) * baseline_pi
-        local_crs = update_crs(local_crs, local_ef, local_pi)
-        local_revision += 1
-        current_day = day
-
-    future_days = _simulate_future_days(
-        local_ef,
-        local_pi,
-        local_crs,
-        local_revision,
-        current_day,
-        baseline_pi,
-    )
+    anchor_day = scheduled[-1]
+    future_days = _simulate_future_days(state, anchor_day)
 
     combined = sorted({day for day in (*scheduled, *future_days) if 0 <= day <= TOTAL_DAYS})
     state.schedule = combined
 
 
-def _recompute_base_ef(state: TopicState) -> None:
-    """Recalculate the base EF using the latest RT/AS/D inputs."""
+def _recompute_base_forgetting_rate(state: TopicState) -> None:
+    """Recalculate the base forgetting rate using the latest RT/AS/D inputs."""
 
     rt_index = _lookup_index(RT_INDEX_TABLE, state.rt_ratio)
     as_index = _lookup_index(AS_INDEX_TABLE, state.accuracy)
     d_index = _difficulty_index(state.difficulty)
-    state.base_ef = rt_index + d_index + as_index
-    state.ef = max(EF_MIN, state.ef)
+    state.base_forgetting_rate = rt_index + d_index + as_index
+    state.forgetting_rate = max(FORGETTING_RATE_MIN, state.forgetting_rate)
 
 
 def _refresh_default_bubble_days(state: TopicState, executed_days: Set[int]) -> None:
@@ -255,15 +212,7 @@ def _refresh_default_bubble_days(state: TopicState, executed_days: Set[int]) -> 
 def _rebuild_future_schedule(state: TopicState, anchor_day: int) -> None:
     """Recompute the forward schedule after a revision outcome."""
 
-    baseline_pi = compute_pi(state.nd, state.ns, state.tmin)
-    dynamic_days = _simulate_future_days(
-        state.ef,
-        state.pi,
-        state.crs,
-        state.revision_count,
-        anchor_day,
-        baseline_pi,
-    )
+    dynamic_days = _simulate_future_days(state, anchor_day)
     future_bubbles = [day for day in state.bubble_days if day > anchor_day]
     combined = sorted({day for day in (*dynamic_days, *future_bubbles) if day > anchor_day})
     state.schedule = combined
@@ -282,15 +231,21 @@ def create_topic(payload: models.TopicCreate) -> models.Topic:
     as_index = _lookup_index(AS_INDEX_TABLE, payload.accuracy)
     d_index = _difficulty_index(payload.difficulty)
 
-    base_ef = rt_index + d_index + as_index
-    ef = max(EF_MIN, base_ef)
-
-    tmin = _resolve_tmin(payload)
-    pi = payload.initial_pi if payload.initial_pi else compute_pi(payload.nd, payload.ns, tmin)
-    crs = compute_crs_initial(ef, pi)
-
     is_hard = payload.difficulty >= 0.7
     bubble_id = payload.bubble_id
+
+    base_forgetting_rate = rt_index + d_index + as_index
+    forgetting_rate = max(FORGETTING_RATE_MIN, base_forgetting_rate)
+
+    tmin = _resolve_tmin(payload)
+    recall_prob = payload.initial_pi if payload.initial_pi is not None else 1.0
+    remaining_days = max(1, payload.nd - payload.add_day)
+    interval_days = compute_interval(
+        forgetting_rate,
+        remaining_days=remaining_days,
+        difficulty=payload.difficulty,
+        is_hard=is_hard,
+    )
 
     explicit_bubbles: Optional[List[int]] = None
     if bubble_id is not None:
@@ -322,10 +277,10 @@ def create_topic(payload: models.TopicCreate) -> models.Topic:
         add_day=payload.add_day,
         bubble_id=bubble_id,
         is_hard=is_hard,
-        base_ef=base_ef,
-        ef=ef,
-        pi=pi,
-        crs=crs,
+        base_forgetting_rate=base_forgetting_rate,
+        forgetting_rate=forgetting_rate,
+        recall_probability=recall_prob,
+        interval_days=interval_days,
         schedule=list(schedule),
         bubble_days=bubble_days_record,
         bubble_day_set=bubble_day_set,
@@ -333,6 +288,7 @@ def create_topic(payload: models.TopicCreate) -> models.Topic:
         nd=payload.nd,
         ns=payload.ns,
         tmin=tmin,
+        last_review_day=payload.add_day,
     )
     _extend_schedule_post_creation(state)
     _topics[topic_id] = state
@@ -360,7 +316,10 @@ def execute_revision(result: models.SessionResult) -> models.Topic:
         state.bubble_day_set.discard(result.day)
         state.bubble_days = [day for day in state.bubble_days if day != result.day]
 
-    state.ef = update_ef(state.ef, result.success)
+    elapsed = max(0, result.day - state.last_review_day)
+    state.recall_probability = recall_probability(elapsed, state.forgetting_rate)
+    state.forgetting_rate = update_forgetting_rate(state.forgetting_rate, result.success)
+    state.last_review_day = result.day
 
     if result.nd is not None:
         state.nd = result.nd
@@ -390,14 +349,20 @@ def execute_revision(result: models.SessionResult) -> models.Topic:
     if difficulty_changed and state.bubble_id is None:
         _refresh_default_bubble_days(state, executed_days)
 
-    _recompute_base_ef(state)
+    _recompute_base_forgetting_rate(state)
 
-    recomputed_pi = compute_pi(state.nd, state.ns, state.tmin)
-    state.pi = ALPHA_PI * state.pi + (1.0 - ALPHA_PI) * recomputed_pi
-    state.crs = update_crs(state.crs, state.ef, state.pi)
+    remaining_days = max(1, state.nd - result.day)
+    state.interval_days = compute_interval(
+        state.forgetting_rate,
+        remaining_days=remaining_days,
+        difficulty=state.difficulty,
+        is_hard=state.is_hard,
+    )
 
     state.revision_count += 1
-    state.history.append((result.day, result.success, state.ef, state.pi, state.crs, None))
+    state.history.append(
+        (result.day, result.success, state.forgetting_rate, state.recall_probability, state.interval_days, None)
+    )
 
     _rebuild_future_schedule(state, result.day)
 
@@ -405,9 +370,9 @@ def execute_revision(result: models.SessionResult) -> models.Topic:
     state.history[-1] = (
         result.day,
         result.success,
-        state.ef,
-        state.pi,
-        state.crs,
+        state.forgetting_rate,
+        state.recall_probability,
+        state.interval_days,
         next_day_value,
     )
 

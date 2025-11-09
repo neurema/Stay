@@ -1,11 +1,6 @@
-"""Self-checks reproducing the Stay Effective v5 worked example.
-
-References: Section 6 Canonical Formulas, Section 7 Interval Mapping, Section 11
-Worked Example in Stay_Effective_v5_Complete.md.
-"""
+"""Self-checks for the decay-based scheduling formulas."""
 from __future__ import annotations
 
-import math
 import unittest
 
 from app.constants import WORKED_EXAMPLE
@@ -13,7 +8,7 @@ from app import formulas
 
 
 class WorkedExampleTest(unittest.TestCase):
-    """Ensure the deterministic formulas match Section 11 within 1%."""
+    """Ensure the decay model aligns with the abstract's worked values."""
 
     tolerance = 0.01
 
@@ -24,34 +19,44 @@ class WorkedExampleTest(unittest.TestCase):
         rel_error = abs(actual - expected) / abs(expected)
         self.assertLessEqual(rel_error, self.tolerance, msg=f"{msg} rel_error={rel_error:.4f}")
 
-    def test_pi(self) -> None:
+    def test_recall_probability(self) -> None:
         ex = WORKED_EXAMPLE
-        pi = formulas.compute_pi(ex["ND"], ex["NS"], ex["Tmin"])
-        self.assertRelativeAlmostEqual(pi, ex["PI"], "PI matches worked example")
+        prob = formulas.recall_probability(ex["elapsed"], ex["forgetting_rate"])
+        self.assertRelativeAlmostEqual(prob, ex["recall_probability"], "Recall probability matches worked example")
 
-    def test_crs(self) -> None:
+    def test_interval_for_threshold(self) -> None:
         ex = WORKED_EXAMPLE
-        crs = formulas.compute_crs_initial(ex["EF"], ex["PI"])
-        self.assertRelativeAlmostEqual(crs, ex["CRS"], "CRS matches worked example")
+        interval = formulas.interval_for_threshold(ex["forgetting_rate"], threshold=ex["threshold"])
+        self.assertRelativeAlmostEqual(interval, ex["raw_interval"], "Base interval matches worked example")
 
-    def test_alphaM(self) -> None:
+    def test_short_horizon_scaling(self) -> None:
         ex = WORKED_EXAMPLE
-        alpha = formulas.compute_alphaM(ex["EF"])
-        self.assertRelativeAlmostEqual(alpha, ex["alphaM"], "alphaM matches worked example")
+        compressed = formulas.apply_short_horizon(ex["raw_interval"], ex["remaining_days"])
+        self.assertRelativeAlmostEqual(
+            compressed,
+            ex["compressed_interval"],
+            "Short-horizon compression matches worked example",
+        )
 
-    def test_i_eff(self) -> None:
+    def test_difficulty_adjustment(self) -> None:
         ex = WORKED_EXAMPLE
-        i_base = ex["I_eff"] / (ex["CRS"] * ex["alphaM"])
-        i_eff = formulas.compute_I_eff(i_base, ex["CRS"], ex["EF"])
-        self.assertRelativeAlmostEqual(i_eff, ex["I_eff"], "I_eff matches worked example")
+        adjusted = formulas.apply_difficulty_focus(ex["compressed_interval"], ex["difficulty"], True)
+        self.assertRelativeAlmostEqual(
+            adjusted,
+            ex["difficulty_interval"],
+            "Difficulty multiplier matches worked example",
+        )
 
-    def test_S_and_delta(self) -> None:
+    def test_full_interval(self) -> None:
         ex = WORKED_EXAMPLE
-        S, delta = formulas.compute_S_and_delta(ex["I_eff"])
-        self.assertRelativeAlmostEqual(S, ex["S"], "S matches worked example")
-        self.assertRelativeAlmostEqual(delta, ex["delta"], "delta matches worked example")
-        self.assertGreater(S, 0.0)
-        self.assertGreater(delta, 0.0)
+        full_interval = formulas.compute_interval(
+            ex["forgetting_rate"],
+            remaining_days=ex["remaining_days"],
+            difficulty=ex["difficulty"],
+            is_hard=True,
+            threshold=ex["threshold"],
+        )
+        self.assertRelativeAlmostEqual(full_interval, ex["difficulty_interval"], "Full interval matches cascade")
 
 
 if __name__ == "__main__":

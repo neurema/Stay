@@ -12,7 +12,7 @@ Stay Effective v5 is a deterministic spaced-repetition scheduler exposed through
 - `app/main.py` – FastAPI application entry point and router registration.
 - `app/services.py` – Deterministic business logic for topics, schedules, bubble templates, and CSV export.
 - `app/scheduler.py` – In-memory day-by-day scheduler backing the `/revision/schedule` endpoint.
-- `app/formulas.py` – Canonical EF/PI/CRS/interval computations with inline worked-example assertions.
+- `app/formulas.py` – Decay-based recall model and threshold scheduling (Δt = −S ln T), with inline worked-example assertions.
 - `app/bubble_templates.py` – Built-in bubble schedules plus environment-driven overrides.
 - `app/routes/` – API route handlers for topics, revision execution, and analytical endpoints.
 - `app/tests/` – `unittest` suites that exercise the endpoints, recreate spec math, and generate load charts. Artifacts land in `app/tests/artifacts/`.
@@ -46,7 +46,7 @@ If you prefer a requirements file, freeze the environment once the basics are in
 | `GET` | `/health` | Simple status probe returning the spec version string.
 | `POST` | `/topics/` | Create a topic with deterministic schedule and optional bubble template.
 | `GET` | `/topics/{topic_id}` | Fetch the current state, schedule, and history for a topic.
-| `POST` | `/revision/` | Log a finished session; updates EF/PI/CRS and rebuilds future schedule.
+| `POST` | `/revision/` | Log a finished session; updates topic state and rebuilds the future schedule.
 | `GET` | `/revision/schedule/day/{day}` | Inspect capped vs total revision load for a given day.
 | `POST` | `/analysis/monte-carlo` | Placeholder for batch schedule simulations (service hook currently unimplemented).
 
@@ -98,13 +98,13 @@ Call `services.export_topic_schedule_csv(Path("./output.csv"))` to materialise a
 The `/analysis/monte-carlo` route is wired to `services.run_monte_carlo_batch`. The current codebase does not provide an implementation, so calling this endpoint raises a 500 error. Add your simulation engine there to return `MonteCarloBatchResponse` payloads, and extend the tests to cover typical scenarios.
 
 ## Running the test suites
-Tests use Python's built-in `unittest` runner. Execute everything with:
+Tests use Python's built-in `unittest` runner (internally using httpx's ASGI transport for endpoints). Execute everything with:
 ```powershell
 python -m unittest discover app/tests
 ```
 Key suites:
 - `test_selfcheck.py` validates the mathematical formulas against the official worked example (≤1% error).
-- `test_endpoints.py` spins up the FastAPI TestClient and exercises core endpoints.
+- `test_endpoints.py` exercises core endpoints via httpx's ASGI transport (avoids environment-specific TestClient lifespan issues).
 - `test_api_revision_load.py` generates a 900-topic plan, plots the daily revision load (requires `matplotlib`), and writes CSV artifacts under `app/tests/artifacts/`.
 
 ## Troubleshooting tips
@@ -120,3 +120,11 @@ Key suites:
 4. Automate linting and tests via GitHub Actions once the dependency list is stable.
 
 Happy scheduling! Feel free to adapt the deterministic formulas to your domain while keeping the spec-aligned tests passing.
+
+## Compatibility notes
+- Response field names remain `base_ef`, `ef`, `pi`, and `crs` for backward compatibility with existing clients. Internally, these now map to the decay-based model:
+  - `base_ef` = base forgetting rate (was base ease factor)
+  - `ef` = current forgetting rate (was ease factor)
+  - `pi` = current recall probability (was performance index)
+  - `crs` = next-interval estimate in days (was composite revision score)
+- The endpoint shapes and request payloads are unchanged.

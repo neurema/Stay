@@ -11,7 +11,8 @@ import unittest
 from pathlib import Path
 from typing import List
 
-from fastapi.testclient import TestClient
+import anyio
+import httpx
 
 from app.constants import MAX_BUBBLE_DAY, MAX_REVISIONS_DAY, TOTAL_DAYS
 from app.main import app
@@ -33,7 +34,6 @@ class CohortRevisionLoadAPITest(unittest.TestCase):
     BUBBLE_DAYS = (240, 255)
 
     def setUp(self) -> None:
-        self.client = TestClient(app)
         self._reset_services()
 
     def _reset_services(self) -> None:
@@ -59,33 +59,36 @@ class CohortRevisionLoadAPITest(unittest.TestCase):
         created_topic_ids: List[str] = []
         add_days: List[int] = []
 
-        for topic_idx in range(self.TOPIC_COUNT):
-            add_day = rng.randint(0, self.ADD_WINDOW)
-            payload = {
-                "subject_tag": f"Topic {topic_idx:03d}",
-                "difficulty": round(rng.betavariate(2.0, 3.0), 3),
-                "add_day": add_day,
-                "rt_ratio": round(rng.uniform(0.8, 1.2), 2),
-                "accuracy": round(rng.uniform(0.7, 0.95), 2),
-                "nd": 270,
-                "ns": 90,
-                "tmin_label": "Major",
-            }
-            if topic_idx in bubble_indices:
-                payload["bubble_id"] = self.BUBBLE_ID
+        async def create_all() -> None:
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
+                for topic_idx in range(self.TOPIC_COUNT):
+                    add_day = rng.randint(0, self.ADD_WINDOW)
+                    payload = {
+                        "subject_tag": f"Topic {topic_idx:03d}",
+                        "difficulty": round(rng.betavariate(2.0, 3.0), 3),
+                        "add_day": add_day,
+                        "rt_ratio": round(rng.uniform(0.8, 1.2), 2),
+                        "accuracy": round(rng.uniform(0.7, 0.95), 2),
+                        "nd": 270,
+                        "ns": 90,
+                        "tmin_label": "Major",
+                    }
+                    if topic_idx in bubble_indices:
+                        payload["bubble_id"] = self.BUBBLE_ID
 
-            response = self.client.post("/topics/", json=payload)
-            self.assertEqual(response.status_code, 200)
-            body = response.json()
-            created_topic_ids.append(body["id"])
-            add_days.append(body["add_day"])
+                    response = await client.post("/topics/", json=payload)
+                    self.assertEqual(response.status_code, 200)
+                    body = response.json()
+                    created_topic_ids.append(body["id"])
+                    add_days.append(body["add_day"])
 
-            if topic_idx in bubble_indices:
-                bubble_topic_ids.add(body["id"])
-                self.assertTrue(
-                    all(day in body["schedule"] for day in self.BUBBLE_DAYS),
-                    "Bubble topics should include registered bubble days",
-                )
+                    if topic_idx in bubble_indices:
+                        bubble_topic_ids.add(body["id"])
+                        self.assertTrue(
+                            all(day in body["schedule"] for day in self.BUBBLE_DAYS),
+                            "Bubble topics should include registered bubble days",
+                        )
+        anyio.run(create_all)
 
         self.assertEqual(len(created_topic_ids), self.TOPIC_COUNT)
         self.assertEqual(len(bubble_topic_ids), self.BUBBLE_COUNT)
@@ -96,21 +99,24 @@ class CohortRevisionLoadAPITest(unittest.TestCase):
         bubble_counts: List[int] = []
         single_counts: List[int] = []
 
-        for day in days:
-            response = self.client.get(f"/revision/schedule/day/{day}")
-            self.assertEqual(response.status_code, 200)
-            summary = response.json()
-            topics_for_day = summary["topics"]
-            total_counts.append(summary["capped_count"])
-            bubble_counts.append(summary["bubble_capped_count"])
-            self.assertEqual(len(topics_for_day), summary["capped_count"])
-            single_capped = summary["capped_count"] - summary["bubble_capped_count"]
-            self.assertGreaterEqual(single_capped, 0)
-            single_counts.append(single_capped)
-            self.assertLessEqual(summary["capped_count"], MAX_REVISIONS_DAY)
-            self.assertLessEqual(summary["bubble_capped_count"], MAX_BUBBLE_DAY)
-            self.assertGreaterEqual(summary["total_count"], summary["capped_count"])
-            self.assertGreaterEqual(summary["bubble_total_count"], summary["bubble_capped_count"])
+        async def fetch_days() -> None:
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://testserver") as client:
+                for day in days:
+                    response = await client.get(f"/revision/schedule/day/{day}")
+                    self.assertEqual(response.status_code, 200)
+                    summary = response.json()
+                    topics_for_day = summary["topics"]
+                    total_counts.append(summary["capped_count"])
+                    bubble_counts.append(summary["bubble_capped_count"])
+                    self.assertEqual(len(topics_for_day), summary["capped_count"])
+                    single_capped = summary["capped_count"] - summary["bubble_capped_count"]
+                    self.assertGreaterEqual(single_capped, 0)
+                    single_counts.append(single_capped)
+                    self.assertLessEqual(summary["capped_count"], MAX_REVISIONS_DAY)
+                    self.assertLessEqual(summary["bubble_capped_count"], MAX_BUBBLE_DAY)
+                    self.assertGreaterEqual(summary["total_count"], summary["capped_count"])
+                    self.assertGreaterEqual(summary["bubble_total_count"], summary["bubble_capped_count"])
+        anyio.run(fetch_days)
 
         self.assertGreater(sum(total_counts), 0)
         self.assertTrue(any(value > 0 for value in single_counts))
