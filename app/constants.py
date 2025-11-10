@@ -4,14 +4,14 @@ from __future__ import annotations
 import math
 from typing import Dict, List, Tuple
 
-TOTAL_DAYS: int = 270
+TOTAL_DAYS: int = 60
 REVISION_INTERVALS: List[int] = [0, 1, 3, 7, 14]
 HARD_REVISION_OFFSETS: List[int] = [0, 1, 3, 7, 14]
 SOFT_REVISION_OFFSETS: List[int] = [0, 1, 3, 7]
 HARD_BUBBLE_OFFSETS: List[int] = [30, 45]
 SOFT_BUBBLE_OFFSETS: List[int] = [14, 30]
 MAX_REVISIONS_DAY: int = 10
-MAX_BUBBLE_DAY: int = 10
+MAX_BUBBLE_DAY: int = 20
 
 FORGETTING_RATE_MIN: float = 1.0
 FORGETTING_RATE_MAX: float = 120.0

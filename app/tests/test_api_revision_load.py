@@ -24,14 +24,14 @@ from app.scheduler import DeterministicScheduler
 class CohortRevisionLoadAPITest(unittest.TestCase):
     """Validate API topic creation and aggregate revision load graph."""
 
-    TOPIC_COUNT = 900
+    TOPIC_COUNT = 450
     BUBBLE_COUNT = 100
-    ADD_WINDOW = 220
+    ADD_WINDOW = 50
     GRAPH_DIR = Path(__file__).parent / "artifacts"
     GRAPH_NAME = "api_revision_vs_day.png"
     SEED = int(__import__("time").time())
     BUBBLE_ID = "api-cohort-bubble"
-    BUBBLE_DAYS = (240, 255)
+    BUBBLE_DAYS = (30, 45)
 
     def setUp(self) -> None:
         self._reset_services()
