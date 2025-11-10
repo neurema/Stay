@@ -5,7 +5,7 @@ Stay_Effective_v5_Complete.md.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response, status
 
 from .. import models, services
 
@@ -30,3 +30,15 @@ async def get_topic(topic_id: str) -> models.Topic:
         return services.get_topic(topic_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/bubbles", status_code=status.HTTP_204_NO_CONTENT)
+async def register_bubble(payload: models.BubbleTemplatePayload) -> Response:
+    """Register or overwrite a bubble template used for scheduling."""
+
+    services.register_bubble_template(
+        payload.bubble_id.strip(),
+        payload.values,
+        relative=payload.relative,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

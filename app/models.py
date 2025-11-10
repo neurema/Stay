@@ -99,6 +99,17 @@ class SessionResult(BaseModel):
     )
 
 
+class BubbleTemplatePayload(BaseModel):
+    """Payload for dynamically registering bubble templates."""
+
+    bubble_id: str = Field(..., min_length=1, description="Identifier for the bubble template")
+    values: List[int] = Field(..., min_items=1, description="Offsets or absolute days for the bubble")
+    relative: bool = Field(
+        False,
+        description="When true, values are treated as offsets from topic add day",
+    )
+
+
 class MonteCarloScenario(BaseModel):
     """Configuration for a single Monte Carlo analysis scenario."""
 
