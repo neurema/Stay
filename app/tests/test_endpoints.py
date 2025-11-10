@@ -60,6 +60,46 @@ class EndpointTest(unittest.TestCase):
         self.topic_id = response.json()["id"]  # store for later tests
         self._print_request_response("POST", "/topics/", payload, response)
 
+    def test_bulk_create_topics(self) -> None:
+        """Ensure bulk topic creation returns ordered schedules."""
+
+        payload = {
+            "topics": [
+                {
+                    "subject_tag": "Bulk Topic A",
+                    "difficulty": 0.55,
+                    "add_day": 0,
+                    "rt_ratio": 1.0,
+                    "accuracy": 0.9,
+                    "nd": 180,
+                    "ns": 96,
+                    "tmin_label": "Major",
+                },
+                {
+                    "subject_tag": "Bulk Topic B",
+                    "difficulty": 0.75,
+                    "add_day": 0,
+                    "rt_ratio": 1.2,
+                    "accuracy": 0.8,
+                    "nd": 200,
+                    "ns": 120,
+                    "tmin_label": "Major",
+                },
+            ]
+        }
+
+        response = self.client.post("/topics/bulk", json=payload)
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertIn("topics", body)
+        topics = body["topics"]
+        self.assertEqual(len(topics), 2)
+        for item in topics:
+            self.assertIn("id", item)
+            self.assertTrue(item["schedule"], "schedule should not be empty")
+
+        self._print_request_response("POST", "/topics/bulk", payload, response)
+
     def test_create_topic_with_bubble_template(self) -> None:
         """Ensure explicit bubble templates are honoured when provided."""
 

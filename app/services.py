@@ -341,6 +341,15 @@ def create_topic(payload: models.TopicCreate) -> models.Topic:
     return _serialize_state(state)
 
 
+def create_topics(payloads: Iterable[models.TopicCreate]) -> List[models.Topic]:
+    """Create multiple topics while preserving request order."""
+
+    results: List[models.Topic] = []
+    for payload in payloads:
+        results.append(create_topic(payload))
+    return results
+
+
 def execute_revision(result: models.SessionResult) -> models.Topic:
     """Execute a revision deterministically (Section 8)."""
 
