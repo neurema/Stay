@@ -22,6 +22,19 @@ async def create_topic(payload: models.TopicCreate) -> models.Topic:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@router.post("/bulk", response_model=models.TopicBulkCreateResponse)
+async def create_topics_bulk(
+    payload: models.TopicBulkCreateRequest,
+) -> models.TopicBulkCreateResponse:
+    """Create multiple topics deterministically in a single call."""
+
+    try:
+        topics = services.create_topics(payload.topics)
+        return models.TopicBulkCreateResponse(topics=topics)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.get("/{topic_id}", response_model=models.Topic)
 async def get_topic(topic_id: str) -> models.Topic:
     """Fetch a topic by identifier."""

@@ -40,6 +40,22 @@ class TopicCreate(BaseModel):
     )
 
 
+class TopicBulkCreateRequest(BaseModel):
+    """Payload wrapper for creating multiple topics in a single request."""
+
+    topics: List[TopicCreate] = Field(
+        ..., min_items=1, description="Collection of topic creation payloads"
+    )
+
+
+class TopicBulkCreateResponse(BaseModel):
+    """Response payload containing the created topics."""
+
+    topics: List[Topic] = Field(
+        ..., description="Topics created in the order they were requested"
+    )
+
+
 class Topic(BaseModel):
     """Persisted topic state exposed through the API (Sections 2 & 8)."""
 
