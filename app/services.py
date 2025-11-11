@@ -56,6 +56,7 @@ class TopicState:
     accuracy: float
     rt_ratio: float
     add_day: int
+    exam_day: int
     bubble_id: Optional[str]
     is_hard: bool
     base_ef: float
@@ -75,6 +76,29 @@ class TopicState:
 _topics: Dict[str, TopicState] = {}
 _scheduler = DeterministicScheduler()
 _bubble_templates: Dict[str, BubbleTemplate] = {}
+
+
+def _exam_limit(exam_day: int) -> int:
+    """Return the inclusive last revision day before the exam."""
+
+    return max(0, min(TOTAL_DAYS, exam_day - 1))
+
+
+def _state_exam_limit(state: TopicState) -> int:
+    return _exam_limit(state.exam_day)
+
+
+def _clamp_schedule_to_exam(state: TopicState) -> None:
+    """Ensure planned revisions and bubbles do not extend beyond the exam."""
+
+    limit = _state_exam_limit(state)
+    state.schedule = sorted(day for day in state.schedule if day <= limit)
+    if state.bubble_day_set:
+        state.bubble_day_set = {day for day in state.bubble_day_set if day <= limit}
+        state.bubble_days = sorted(state.bubble_day_set)
+    else:
+        state.bubble_day_set = set()
+        state.bubble_days = []
 
 
 def _lookup_index(table: List[Tuple[float, float, float]], value: float) -> float:
@@ -151,6 +175,7 @@ def _simulate_future_days(
     revision_index: int,
     current_day: int,
     baseline_pi: float,
+    max_day: int,
 ) -> List[int]:
     """Simulate forward-looking revision days assuming deterministic success."""
 
@@ -161,7 +186,7 @@ def _simulate_future_days(
     local_revision = revision_index
     day_cursor = current_day
 
-    while day_cursor < TOTAL_DAYS:
+    while day_cursor < max_day:
         i_base = get_I_base(local_revision)
         if i_base <= 0:
             i_base = 1
@@ -173,7 +198,7 @@ def _simulate_future_days(
 
         step = max(1, math.ceil(delta))
         next_day = day_cursor + step
-        if next_day > TOTAL_DAYS:
+        if next_day > max_day:
             break
 
         planned_days.append(next_day)
@@ -190,7 +215,8 @@ def _extend_schedule_post_creation(state: TopicState) -> None:
     """Extend newly created topics to cover the full planning horizon."""
 
     baseline_pi = compute_pi(state.nd, state.ns, state.tmin)
-    scheduled = sorted({day for day in state.schedule if 0 <= day <= TOTAL_DAYS})
+    limit = _state_exam_limit(state)
+    scheduled = sorted({day for day in state.schedule if 0 <= day <= limit})
 
     if not scheduled:
         return
@@ -219,9 +245,10 @@ def _extend_schedule_post_creation(state: TopicState) -> None:
         local_revision,
         current_day,
         baseline_pi,
+        limit,
     )
 
-    combined = sorted({day for day in (*scheduled, *future_days) if 0 <= day <= TOTAL_DAYS})
+    combined = sorted({day for day in (*scheduled, *future_days) if 0 <= day <= limit})
     state.schedule = combined
 
 
@@ -238,12 +265,17 @@ def _recompute_base_ef(state: TopicState) -> None:
 def _refresh_default_bubble_days(state: TopicState, executed_days: Set[int]) -> None:
     """Rebuild default bubble days when difficulty band changes."""
 
-    candidate_schedule = build_topic_schedule(state.add_day, state.is_hard)
+    limit = _state_exam_limit(state)
+    candidate_schedule = build_topic_schedule(
+        state.add_day,
+        state.is_hard,
+        max_day=limit,
+    )
     revision_offsets = HARD_REVISION_OFFSETS if state.is_hard else SOFT_REVISION_OFFSETS
     base_days = {
         state.add_day + offset
         for offset in revision_offsets
-        if state.add_day + offset <= TOTAL_DAYS
+        if state.add_day + offset <= limit
     }
     bubble_days = sorted(
         day for day in candidate_schedule if day not in base_days and day not in executed_days
@@ -256,6 +288,7 @@ def _rebuild_future_schedule(state: TopicState, anchor_day: int) -> None:
     """Recompute the forward schedule after a revision outcome."""
 
     baseline_pi = compute_pi(state.nd, state.ns, state.tmin)
+    limit = _state_exam_limit(state)
     dynamic_days = _simulate_future_days(
         state.ef,
         state.pi,
@@ -263,13 +296,16 @@ def _rebuild_future_schedule(state: TopicState, anchor_day: int) -> None:
         state.revision_count,
         anchor_day,
         baseline_pi,
+        limit,
     )
-    future_bubbles = [day for day in state.bubble_days if day > anchor_day]
-    combined = sorted({day for day in (*dynamic_days, *future_bubbles) if day > anchor_day})
+    future_bubbles = [day for day in state.bubble_days if anchor_day < day <= limit]
+    combined = sorted({day for day in (*dynamic_days, *future_bubbles) if anchor_day < day <= limit})
     state.schedule = combined
     if state.bubble_day_set:
-        state.bubble_day_set = {day for day in state.bubble_day_set if day > anchor_day}
-        state.bubble_days = sorted(state.bubble_day_set)
+        state.bubble_day_set = {day for day in state.bubble_day_set if anchor_day < day <= limit}
+    else:
+        state.bubble_day_set = set()
+    state.bubble_days = sorted(state.bubble_day_set)
     _scheduler.register_topic(state.id, state.schedule)
 
 
@@ -292,6 +328,9 @@ def create_topic(payload: models.TopicCreate) -> models.Topic:
     is_hard = payload.difficulty >= 0.7
     bubble_id = payload.bubble_id
 
+    exam_day = payload.add_day + payload.nd
+    limit = _exam_limit(exam_day)
+
     explicit_bubbles: Optional[List[int]] = None
     if bubble_id is not None:
         explicit_bubbles = _resolve_bubble_days(bubble_id, payload.add_day)
@@ -300,7 +339,7 @@ def create_topic(payload: models.TopicCreate) -> models.Topic:
     base_days = [
         payload.add_day + offset
         for offset in revision_offsets
-        if payload.add_day + offset <= TOTAL_DAYS
+        if payload.add_day + offset <= limit
     ]
 
     schedule = build_topic_schedule(
@@ -308,6 +347,7 @@ def create_topic(payload: models.TopicCreate) -> models.Topic:
         is_hard,
         bubble_days=explicit_bubbles,
         revision_offsets=revision_offsets,
+        max_day=limit,
     )
     base_day_set = set(base_days)
     bubble_days_record = sorted(day for day in schedule if day not in base_day_set)
@@ -320,6 +360,7 @@ def create_topic(payload: models.TopicCreate) -> models.Topic:
         accuracy=payload.accuracy,
         rt_ratio=payload.rt_ratio,
         add_day=payload.add_day,
+    exam_day=exam_day,
         bubble_id=bubble_id,
         is_hard=is_hard,
         base_ef=base_ef,
@@ -335,6 +376,7 @@ def create_topic(payload: models.TopicCreate) -> models.Topic:
         tmin=tmin,
     )
     _extend_schedule_post_creation(state)
+    _clamp_schedule_to_exam(state)
     _topics[topic_id] = state
     _scheduler.register_topic(topic_id, state.schedule)
 
@@ -373,6 +415,7 @@ def execute_revision(result: models.SessionResult) -> models.Topic:
 
     if result.nd is not None:
         state.nd = result.nd
+        state.exam_day = result.day + result.nd
     if result.ns is not None:
         state.ns = result.ns
     if result.tmin_override is not None:

@@ -23,21 +23,24 @@ def build_topic_schedule(
     *,
     bubble_days: Optional[Iterable[int]] = None,
     revision_offsets: Optional[Iterable[int]] = None,
+    max_day: Optional[int] = None,
 ) -> List[int]:
     """Build the initial deterministic schedule including bubble events."""
+
+    limit = TOTAL_DAYS if max_day is None else max(0, min(TOTAL_DAYS, max_day))
 
     offsets = list(revision_offsets) if revision_offsets is not None else (
         HARD_REVISION_OFFSETS if is_hard else SOFT_REVISION_OFFSETS
     )
-    base_days = [add_day + offset for offset in offsets if add_day + offset <= TOTAL_DAYS]
+    base_days = [add_day + offset for offset in offsets if add_day + offset <= limit]
 
     if bubble_days is None:
         bubble_offsets = HARD_BUBBLE_OFFSETS if is_hard else SOFT_BUBBLE_OFFSETS
         resolved_bubbles = [
-            add_day + offset for offset in bubble_offsets if 0 <= add_day + offset <= TOTAL_DAYS
+            add_day + offset for offset in bubble_offsets if 0 <= add_day + offset <= limit
         ]
     else:
-        resolved_bubbles = [day for day in bubble_days if 0 <= day <= TOTAL_DAYS]
+        resolved_bubbles = [day for day in bubble_days if 0 <= day <= limit]
 
     schedule = sorted({*(base_days), *resolved_bubbles})
     return schedule

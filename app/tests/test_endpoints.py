@@ -123,6 +123,42 @@ class EndpointTest(unittest.TestCase):
         self.assertIn(265, body["schedule"])
         self._print_request_response("POST", "/topics/", payload, response)
 
+    def test_schedule_respects_exam_day(self) -> None:
+        """Ensure schedules do not extend beyond the declared exam day."""
+
+        payload = {
+            "subject_tag": "Exam Bound Topic",
+            "difficulty": 0.5,
+            "add_day": 0,
+            "rt_ratio": 1.0,
+            "accuracy": 0.85,
+            "nd": 30,
+            "ns": 40,
+            "tmin_label": "Major",
+        }
+        response = self.client.post("/topics/", json=payload)
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        exam_day = payload["add_day"] + payload["nd"]
+        self.assertTrue(body["schedule"], "schedule should include at least one planned day")
+        self.assertTrue(all(day < exam_day for day in body["schedule"]))
+
+        topic_id = body["id"]
+        revision_day = next((day for day in body["schedule"] if day > payload["add_day"]), body["schedule"][-1])
+        revision_payload = {
+            "topic_id": topic_id,
+            "day": revision_day,
+            "success": True,
+            "nd": 5,
+        }
+        revision_response = self.client.post("/revision/", json=revision_payload)
+        self.assertEqual(revision_response.status_code, 200)
+        updated = revision_response.json()
+        new_exam_day = revision_day + revision_payload["nd"]
+        if updated["schedule"]:
+            self.assertTrue(all(day < new_exam_day for day in updated["schedule"]))
+            self.assertTrue(all(day > revision_day for day in updated["schedule"]))
+
     def test_get_topic(self) -> None:
         """Test topic retrieval."""
         if not self.topic_id:
