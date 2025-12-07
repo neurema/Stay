@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
-from . import models
+from . import db, models
 from .constants import (
     AS_INDEX_TABLE,
     DIFFICULTY_INDEX_TABLE,
@@ -41,34 +41,8 @@ class BubbleTemplate:
     relative: bool = False
 
 
-@dataclass
-class TopicState:
-    """Internal topic state container matching Section 2 schema."""
+# Removed internal TopicState class; use models.TopicState now.
 
-    id: str
-    subject_tag: str
-    difficulty: float
-    accuracy: float
-    rt_ratio: float
-    add_day: int
-    bubble_id: Optional[str]
-    is_hard: bool
-    base_forgetting_rate: float
-    forgetting_rate: float
-    recall_probability: float
-    interval_days: float
-    schedule: List[int] = field(default_factory=list)
-    bubble_days: List[int] = field(default_factory=list)
-    bubble_day_set: Set[int] = field(default_factory=set)
-    revision_count: int = 0
-    history: List[Tuple[int, bool, float, float, float, Optional[int]]] = field(default_factory=list)
-    nd: int = 0
-    ns: int = 0
-    tmin: float = 0.0
-    last_review_day: int = 0
-
-
-_topics: Dict[str, TopicState] = {}
 _scheduler = DeterministicScheduler()
 _bubble_templates: Dict[str, BubbleTemplate] = {}
 
@@ -117,7 +91,7 @@ def _resolve_bubble_days(bubble_id: Optional[str], add_day: int) -> Optional[Lis
     return normalized if normalized else None
 
 
-def _serialize_state(state: TopicState) -> models.Topic:
+def _serialize_state(state: models.TopicState) -> models.Topic:
     return models.Topic(
         id=state.id,
         subject_tag=state.subject_tag,
@@ -140,7 +114,7 @@ def _serialize_state(state: TopicState) -> models.Topic:
     )
 
 
-def _simulate_future_days(state: TopicState, anchor_day: int) -> List[int]:
+def _simulate_future_days(state: models.TopicState, anchor_day: int) -> List[int]:
     """Simulate forward-looking revision days assuming deterministic success."""
 
     planned_days: List[int] = []
@@ -167,7 +141,7 @@ def _simulate_future_days(state: TopicState, anchor_day: int) -> List[int]:
     return planned_days
 
 
-def _extend_schedule_post_creation(state: TopicState) -> None:
+def _extend_schedule_post_creation(state: models.TopicState) -> None:
     """Extend newly created topics to cover the full planning horizon."""
 
     scheduled = sorted({day for day in state.schedule if 0 <= day <= TOTAL_DAYS})
@@ -182,7 +156,7 @@ def _extend_schedule_post_creation(state: TopicState) -> None:
     state.schedule = combined
 
 
-def _recompute_base_forgetting_rate(state: TopicState) -> None:
+def _recompute_base_forgetting_rate(state: models.TopicState) -> None:
     """Recalculate the base forgetting rate using the latest RT/AS/D inputs."""
 
     rt_index = _lookup_index(RT_INDEX_TABLE, state.rt_ratio)
@@ -192,7 +166,7 @@ def _recompute_base_forgetting_rate(state: TopicState) -> None:
     state.forgetting_rate = max(FORGETTING_RATE_MIN, state.forgetting_rate)
 
 
-def _refresh_default_bubble_days(state: TopicState, executed_days: Set[int]) -> None:
+def _refresh_default_bubble_days(state: models.TopicState, executed_days: Set[int]) -> None:
     """Rebuild default bubble days when difficulty band changes."""
 
     candidate_schedule = build_topic_schedule(state.add_day, state.is_hard)
@@ -209,7 +183,7 @@ def _refresh_default_bubble_days(state: TopicState, executed_days: Set[int]) -> 
     state.bubble_day_set = set(bubble_days)
 
 
-def _rebuild_future_schedule(state: TopicState, anchor_day: int) -> None:
+def _rebuild_future_schedule(state: models.TopicState, anchor_day: int) -> None:
     """Recompute the forward schedule after a revision outcome."""
 
     dynamic_days = _simulate_future_days(state, anchor_day)
@@ -268,7 +242,7 @@ def create_topic(payload: models.TopicCreate) -> models.Topic:
     bubble_days_record = sorted(day for day in schedule if day not in base_day_set)
     bubble_day_set = set(bubble_days_record)
 
-    state = TopicState(
+    state = models.TopicState(
         id=topic_id,
         subject_tag=payload.subject_tag,
         difficulty=payload.difficulty,
@@ -291,7 +265,7 @@ def create_topic(payload: models.TopicCreate) -> models.Topic:
         last_review_day=payload.add_day,
     )
     _extend_schedule_post_creation(state)
-    _topics[topic_id] = state
+    db.upsert_topic(state)
     _scheduler.register_topic(topic_id, state.schedule)
 
     return _serialize_state(state)
@@ -309,10 +283,11 @@ def create_topics(payloads: Iterable[models.TopicCreate]) -> List[models.Topic]:
 def execute_revision(result: models.SessionResult) -> models.Topic:
     """Execute a revision deterministically (Section 8)."""
 
-    if result.topic_id not in _topics:
+    data = db.get_topic(result.topic_id)
+    if not data:
         raise KeyError(f"Topic {result.topic_id} not found")
 
-    state = _topics[result.topic_id]
+    state = models.TopicState(**data)
 
     if result.day > TOTAL_DAYS:
         raise ValueError("Day exceeds TOTAL_DAYS from Section 1")
@@ -385,13 +360,22 @@ def execute_revision(result: models.SessionResult) -> models.Topic:
         next_day_value,
     )
 
+    db.upsert_topic(state)
     return _serialize_state(state)
 
 
 def get_topic(topic_id: str) -> models.Topic:
-    if topic_id not in _topics:
+    data = db.get_topic(topic_id)
+    if not data:
         raise KeyError(f"Topic {topic_id} not found")
-    return _serialize_state(_topics[topic_id])
+    state = models.TopicState(**data)
+    return _serialize_state(state)
+
+
+def get_all_topics() -> List[models.Topic]:
+    """Fetch all topics."""
+    all_data = db.get_all_topics()
+    return [_serialize_state(models.TopicState(**data)) for data in all_data]
 
 
 def get_schedule_for_day(day: int) -> Dict[str, Any]:
@@ -399,9 +383,10 @@ def get_schedule_for_day(day: int) -> Dict[str, Any]:
         raise ValueError("Requested day exceeds TOTAL_DAYS")
     scheduled_topics: List[Tuple[str, bool]] = []
     for topic_id in _scheduler.get_schedule_for_day(day):
-        state = _topics.get(topic_id)
-        if state is None:
+        data = db.get_topic(topic_id)
+        if not data:
             continue
+        state = models.TopicState(**data)
         is_bubble_day = day in state.bubble_day_set
         scheduled_topics.append((topic_id, is_bubble_day))
 
@@ -437,8 +422,11 @@ def get_schedule_for_day(day: int) -> Dict[str, Any]:
 def export_topic_schedule_csv(output_path: Path) -> Path:
     """Export per-topic timeline rows capturing intro, revisions, and bubble entry."""
 
-    if not _topics:
+    all_data = db.get_all_topics()
+    if not all_data:
         raise ValueError("No topics have been registered")
+    
+    topics_list = [models.TopicState(**d) for d in all_data]
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -460,7 +448,7 @@ def export_topic_schedule_csv(output_path: Path) -> Path:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
 
-        for state in sorted(_topics.values(), key=lambda item: (item.add_day, item.subject_tag)):
+        for state in sorted(topics_list, key=lambda item: (item.add_day, item.subject_tag)):
             bubble_days = sorted(state.bubble_days)
             bubble_day_set = state.bubble_day_set
             bubble_entry_day = bubble_days[0] if bubble_days else None
@@ -572,3 +560,13 @@ def get_bubble_template(bubble_id: str) -> Optional[Dict[str, Any]]:
     if template is None:
         return None
     return {"values": list(template.values), "relative": template.relative}
+
+
+def init_scheduler_from_db() -> None:
+    """Load all topics from DB and populate the scheduler."""
+    _scheduler.clear()  # Optional, but good practice if called multiple times or on reload
+    all_data = db.get_all_topics()
+    for data in all_data:
+        topic = models.TopicState(**data)
+        if topic.schedule:
+             _scheduler.register_topic(topic.id, topic.schedule)

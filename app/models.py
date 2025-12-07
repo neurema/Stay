@@ -7,7 +7,42 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple
 
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Set, Tuple
+
 from pydantic import BaseModel, Field
+
+@dataclass
+class TopicState:
+    """Internal topic state container matching Section 2 schema."""
+
+    id: str
+    subject_tag: str
+    difficulty: float
+    accuracy: float
+    rt_ratio: float
+    add_day: int
+    bubble_id: Optional[str]
+    is_hard: bool
+    base_forgetting_rate: float
+    forgetting_rate: float
+    recall_probability: float
+    interval_days: float
+    schedule: List[int] = field(default_factory=list)
+    bubble_days: List[int] = field(default_factory=list)
+    bubble_day_set: Set[int] = field(default_factory=set)
+    revision_count: int = 0
+    history: List[Tuple[int, bool, float, float, float, Optional[int]]] = field(default_factory=list)
+    nd: int = 0
+    ns: int = 0
+    tmin: float = 0.0
+    last_review_day: int = 0
+
+    def __post_init__(self):
+        if isinstance(self.bubble_day_set, list):
+            self.bubble_day_set = set(self.bubble_day_set)
+        if self.history and isinstance(self.history[0], list):
+             self.history = [tuple(x) for x in self.history]
 
 
 class TopicCreate(BaseModel):

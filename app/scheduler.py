@@ -49,6 +49,10 @@ class DeterministicScheduler:
     def __init__(self) -> None:
         self._topics_by_day: DefaultDict[int, List[str]] = defaultdict(list)
 
+    def clear(self) -> None:
+        """Clear all scheduled topics."""
+        self._topics_by_day.clear()
+
     def register_topic(self, topic_id: str, schedule: Iterable[int]) -> None:
         """Register or update a topic schedule deterministically."""
 

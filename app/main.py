@@ -9,7 +9,7 @@ import logging
 
 from fastapi import FastAPI
 
-from . import services
+from . import db, services
 from .bubble_templates import resolve_templates
 from .routes import analysis, revision, topics
 
@@ -20,6 +20,8 @@ app.include_router(topics.router)
 app.include_router(revision.router)
 app.include_router(analysis.router)
 
+db.init_db()
+services.init_scheduler_from_db()
 services.configure_bubble_templates(resolve_templates())
 
 logger.info("Stay Effective v5 deterministic backend initialized per specification")

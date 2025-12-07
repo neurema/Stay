@@ -5,11 +5,19 @@ Stay_Effective_v5_Complete.md.
 """
 from __future__ import annotations
 
+from typing import List
+
 from fastapi import APIRouter, HTTPException, Response, status
 
 from .. import models, services
 
 router = APIRouter(prefix="/topics", tags=["topics"])
+
+
+@router.get("/", response_model=List[models.Topic])
+async def list_topics() -> List[models.Topic]:
+    """List all stored topics."""
+    return services.get_all_topics()
 
 
 @router.post("/", response_model=models.Topic)
