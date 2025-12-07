@@ -12,6 +12,14 @@ from .. import models, services
 router = APIRouter(prefix="/topics", tags=["topics"])
 
 
+@router.get("/", response_model=list[models.Topic])
+async def get_all_topics() -> list[models.Topic]:
+    """Fetch all topics."""
+    # Direct DB access via services layer helper to perform bulk read
+    # We need to expose a bulk read in services if not exists, but we can iterate db.get_all_topics
+    return [services._serialize_state(t) for t in services.db.get_all_topics()]
+
+
 @router.post("/", response_model=models.Topic)
 async def create_topic(payload: models.TopicCreate) -> models.Topic:
     """Create a new topic deterministically."""

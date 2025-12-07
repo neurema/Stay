@@ -5,7 +5,8 @@ from Stay_Effective_v5_Complete.md.
 """
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Tuple, Set
 
 from pydantic import BaseModel, Field
 
@@ -38,7 +39,6 @@ class TopicCreate(BaseModel):
         None,
         description="Optional identifier for tying the topic to a precomputed bubble",
     )
-
 
 class TopicBulkCreateRequest(BaseModel):
     """Payload wrapper for creating multiple topics in a single request."""
@@ -192,3 +192,31 @@ class MonteCarloBatchResponse(BaseModel):
     """Response wrapper for batch Monte Carlo analysis."""
 
     scenarios: List[MonteCarloScenarioResult]
+
+
+@dataclass
+class TopicState:
+    """Internal topic state container matching Section 2 schema."""
+
+    id: str
+    subject_tag: str
+    difficulty: float
+    accuracy: float
+    rt_ratio: float
+    add_day: int
+    exam_day: int
+    bubble_id: Optional[str]
+    is_hard: bool
+    base_ef: float
+    ef: float
+    pi: float
+    crs: float
+    schedule: List[int] = field(default_factory=list)
+    bubble_days: List[int] = field(default_factory=list)
+    bubble_day_set: Set[int] = field(default_factory=set)
+    template_bubble_days: Set[int] = field(default_factory=set)
+    revision_count: int = 0
+    history: List[Tuple[int, bool, float, float, float, Optional[int]]] = field(default_factory=list)
+    nd: int = 0
+    ns: int = 0
+    tmin: float = 0.0
